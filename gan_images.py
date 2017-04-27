@@ -107,55 +107,94 @@ def generator(z, y, batch_size, dim_con=64, dim_fc=1024):
         z: input noise tensor, float - [batch_size, DIM_Z=100]
         y: input label tensor, float - [batch_size, DIM_Y=10]
         batch_size:
-        dim_h1:
-        dim_h2:
+        dim_con:
+        dim_fc:
     Returns:
         x': the generated image tensor, float - [batch_size, DIM_IMAGE=784]
     """
     # TODO add nn.dropout layer
-    s_h, s_w = 28, 28
-    s_h2, s_h4 = 14, 7
-    s_w2, s_w4 = 14, 7
+    with tf.variable_scope('generator'):
+        s_h, s_w = 28, 28
+        s_h2, s_h4 = 14, 7
+        s_w2, s_w4 = 14, 7
 
-    y_4d = tf.reshape(y, [batch_size, 1, 1, DIM_Y])
-    z_ = tf.concat([z, y], 1)
+        y_4d = tf.reshape(y, [batch_size, 1, 1, DIM_Y])
+        z_ = tf.concat([z, y], 1)
 
-    h1_ = relu(z_, DIM_Z + DIM_Y, dim_fc, 'h1_fc')
-    h1 = tf.concat([h1_, y], 1)
+        h1_ = relu(z_, DIM_Z + DIM_Y, dim_fc, 'h1_fc')
+        h1 = tf.concat([h1_, y], 1)
 
-    h2_ = relu(h1, h1.get_shape().as_list()[-1], dim_con * 2 * s_h4 * s_w4, 'h2_fc')
-    h2_4d = tf.reshape(h2_, [batch_size, s_h4, s_w4, dim_con * 2])
-    h1 = concat(h2_4d, y_4d)
+        h2_ = relu(h1, h1.get_shape().as_list()[-1], dim_con * 2 * s_h4 * s_w4, 'h2_fc')
+        h2_4d = tf.reshape(h2_, [batch_size, s_h4, s_w4, dim_con * 2])
+        h1 = concat(h2_4d, y_4d)
 
-    h2_4d = tf.nn.relu(deconv2d(h1, [batch_size, s_h2, s_w2, dim_con * 2], 'h3_con'))
-    h2 = concat(h2_4d, y_4d)
+        h2_4d = tf.nn.relu(deconv2d(h1, [batch_size, s_h2, s_w2, dim_con * 2], 'h3_con'))
+        h2 = concat(h2_4d, y_4d)
 
-    return tf.nn.sigmoid(deconv2d(h2, [batch_size, s_h, s_w, 1], 'x'))
+        return tf.nn.sigmoid(deconv2d(h2, [batch_size, s_h, s_w, 1], 'x'))
+
+
+def sampler(z, y, batch_size=1, dim_con=64, dim_fc=1024):
+    """
+    Args:
+        z: input noise tensor, float - [batch_size, DIM_Z=100]
+        y: input label tensor, float - [batch_size, DIM_Y=10]
+        batch_size:
+        dim_con:
+        dim_fc:
+    Returns:
+        x': the generated image tensor, float - [batch_size, DIM_IMAGE=784]
+    """
+    # TODO add nn.dropout layer
+    with tf.variable_scope("generator") as scope:
+        scope.reuse_variables()
+
+        s_h, s_w = 28, 28
+        s_h2, s_h4 = 14, 7
+        s_w2, s_w4 = 14, 7
+
+        y_4d = tf.reshape(y, [batch_size, 1, 1, DIM_Y])
+        z_ = tf.concat([z, y], 1)
+
+        h1_ = relu(z_, DIM_Z + DIM_Y, dim_fc, 'h1_fc')
+        h1 = tf.concat([h1_, y], 1)
+
+        h2_ = relu(h1, h1.get_shape().as_list()[-1], dim_con * 2 * s_h4 * s_w4, 'h2_fc')
+        h2_4d = tf.reshape(h2_, [batch_size, s_h4, s_w4, dim_con * 2])
+        h1 = concat(h2_4d, y_4d)
+
+        h2_4d = tf.nn.relu(deconv2d(h1, [batch_size, s_h2, s_w2, dim_con * 2], 'h3_con'))
+        h2 = concat(h2_4d, y_4d)
+
+        return tf.nn.sigmoid(deconv2d(h2, [batch_size, s_h, s_w, 1], 'x'))
 
 
 # TODO implement minibatch
-def discriminator(x, y, batch_size, dim_con=64, dim_fc=1024):
+def discriminator(x, y, batch_size, dim_con=64, dim_fc=1024, reuse=False):
     """
     """
-    y_4d = tf.reshape(y, [batch_size, 1, 1, DIM_Y])
-    x_4d = tf.reshape(x, [batch_size, 28, 28, 1])
-    x_ = concat(x_4d, y_4d)
+    with tf.variable_scope("discriminator") as scope:
+        if reuse:
+            scope.reuse_variables()
+        y_4d = tf.reshape(y, [batch_size, 1, 1, DIM_Y])
+        x_4d = tf.reshape(x, [batch_size, 28, 28, 1])
+        x_ = concat(x_4d, y_4d)
 
-    h1_ = lrelu(conv2d(x_, 1 + DIM_Y, 'h1_conv2'))
-    h1 = concat(h1_, y_4d)
+        h1_ = lrelu(conv2d(x_, 1 + DIM_Y, 'h1_conv2'))
+        h1 = concat(h1_, y_4d)
 
-    # TODO add batch-normalization
-    h2_4d = lrelu(conv2d(h1, dim_con + DIM_Y, 'h2_conv2'))
-    h2_ = tf.reshape(h2_4d, [batch_size, -1])
-    h2 = tf.concat([h2_, y], 1)
+        # TODO add batch-normalization
+        h2_4d = lrelu(conv2d(h1, dim_con + DIM_Y, 'h2_conv2'))
+        h2_ = tf.reshape(h2_4d, [batch_size, -1])
+        h2 = tf.concat([h2_, y], 1)
 
-    h3_ = tf.nn.dropout(relu(h2, h2.get_shape().as_list()[-1], dim_fc, 'h3_fc1', leaky=True), KEEP_PROB)
-    h3 = tf.concat([h3_, y], 1)
-    # h4 = tf.nn.dropout(relu(h3, dim_fc, dim_fc, 'h4_fc', leaky=True), KEEP_PROB)
+        h3_ = tf.nn.dropout(relu(h2, h2.get_shape().as_list()[-1], dim_fc, 'h3_fc1', leaky=True), KEEP_PROB)
+        h3 = tf.concat([h3_, y], 1)
+        # h4 = tf.nn.dropout(relu(h3, dim_fc, dim_fc, 'h4_fc', leaky=True), KEEP_PROB)
 
-    logits = linear(h3, dim_fc + DIM_Y, 1, 'y')
+        logits = linear(h3, dim_fc + DIM_Y, 1, 'y')
 
-    return tf.nn.sigmoid(logits), logits
+        return tf.nn.sigmoid(logits), logits
 
 
 def concat(x, y):
@@ -230,22 +269,18 @@ class GAN(object):
 
         self.y = tf.placeholder(tf.float32, [None, DIM_Y])
 
-        with tf.variable_scope('generator'):
-            # samples from a noise distribution as input
-            self.z = tf.placeholder(tf.float32, [None, DIM_Z])
-            # the generator network passes the input (self.z) through the MLP
-            self.G = generator(self.z, self.y, self.batch_size)
-
-        with tf.variable_scope('discriminator') as scope:
-            self.x = tf.placeholder(tf.float32, [None, DIM_IMAGE])
-            # Discriminator D1 takes in input x (sampled from the true data distribution)
-            # and outputs the likelihood of this input belonging to the true data distribution
-            self.D_real, self.logits_D_real = discriminator(self.x, self.y, self.batch_size)
-            # because we're reusing the variable discriminator
-            scope.reuse_variables()
-            # Discriminator D1 takes in the fake data generated by G and outputs the
-            # likelihood of this input belonging to the true data distribution
-            self.D_fake, self.logits_D_fake = discriminator(self.G, self.y, self.batch_size)
+        # placeholder for samples from a noise distribution
+        self.z = tf.placeholder(tf.float32, [None, DIM_Z])
+        # the generator network takes noise and target label
+        self.G = generator(self.z, self.y, self.batch_size)
+        # a sampler network that generates demo samples for logging
+        self.S = sampler(self.z, self.y)
+        # placeholder for samples from the true data distribution
+        self.x = tf.placeholder(tf.float32, [None, DIM_IMAGE])
+        # the discriminator network predicting the likelihood of true data distribution
+        self.D_real, self.logits_D_real = discriminator(self.x, self.y, self.batch_size)
+        # the discriminator network predicting the likelihood of generated (fake) data distribution
+        self.D_fake, self.logits_D_fake = discriminator(self.G, self.y, self.batch_size, reuse=True)
 
         # When optimizing D, we want to define it's loss function such that it
         # maximizes the quantity D1 (which maps the distribution of true data) and
@@ -255,7 +290,7 @@ class GAN(object):
         self.loss_D_fake = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(
             logits=self.logits_D_fake, labels=tf.zeros_like(self.D_fake)))
         # TODO try tf.reduce_mean(d1 + (1 - d2))
-        self.loss_d = self.loss_D_real + self.loss_D_fake
+        self.loss_d = self.loss_D_real + (1 - self.loss_D_fake)
         self.params_d = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope='discriminator')
         self.opt_d = tf.train.AdamOptimizer(learning_rate=self.learning_rate, beta1=self.decay_rate) \
             .minimize(self.loss_d, var_list=self.params_d)
@@ -297,7 +332,7 @@ class GAN(object):
                 loss_g_sum = loss_d_sum = 0
                 num_steps = self.data.num_training_examples() // self.batch_size
 
-                for step in xrange(num_steps):
+                for step in xrange(5):
                     # update discriminator
                     x, y = self.data.images_and_labels(self.batch_size)
                     z = self.gen.image_samples(self.batch_size)
@@ -317,7 +352,7 @@ class GAN(object):
                     loss_g_sum += loss_g
 
                 print('{}: avg_d {}\tavg_g {}'.format(epoch, loss_d_sum / num_steps, loss_g_sum / num_steps))
-                sample = session.run(self.G, feed_dict={
+                sample = session.run(self.S, feed_dict={
                     self.y: [[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]],
                     self.z: self.gen.image_samples(1)
                 })
