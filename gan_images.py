@@ -78,6 +78,7 @@ def bias_variable(shape, ):
         trainable=True)
 
 
+# TODO remove in-dimension
 def linear(x, dim_in, dim_out, scope):
     with tf.variable_scope(scope or 'linear'):
         w = weight_variable([dim_in, dim_out])
@@ -85,6 +86,7 @@ def linear(x, dim_in, dim_out, scope):
     return tf.matmul(x, w) + b
 
 
+# TODO remove in-dimension
 def relu(x, dim_in, dim_out, scope, leaky=False):
     with tf.variable_scope(scope or 'relu'):
         w = weight_variable([dim_in, dim_out])
@@ -99,43 +101,98 @@ def relu(x, dim_in, dim_out, scope, leaky=False):
         return l1 * x_ + l2 * tf.abs(x_)
 
 
-def generator(z, y, dim_h1=150, dim_h2=300):
+def generator(z, y, batch_size, dim_con=64, dim_fc=1024):
     """
     Args:
         z: input noise tensor, float - [batch_size, DIM_Z=100]
         y: input label tensor, float - [batch_size, DIM_Y=10]
+        batch_size:
         dim_h1:
         dim_h2:
     Returns:
         x': the generated image tensor, float - [batch_size, DIM_IMAGE=784]
     """
     # TODO add nn.dropout layer
-    # yb = tf.reshape(y, [batch_size, 1, 1, DIM_Y])
+    s_h, s_w = 28, 28
+    s_h2, s_h4 = 14, 7
+    s_w2, s_w4 = 14, 7
+
+    y_4d = tf.reshape(y, [batch_size, 1, 1, DIM_Y])
     z_ = tf.concat([z, y], 1)
 
-    h1 = relu(z_, DIM_Z + DIM_Y, dim_h1, 'h1')
-    h2 = relu(h1, dim_h1, dim_h2, 'h2')
-    act = tf.nn.tanh(linear(h2, dim_h2, DIM_IMAGE, 'x'))
-    return act / 2 + 0.5
+    h1_ = relu(z_, DIM_Z + DIM_Y, dim_fc, 'h1_fc')
+    h1 = tf.concat([h1_, y], 1)
+
+    h2_ = relu(h1, h1.get_shape().as_list()[-1], dim_con * 2 * s_h4 * s_w4, 'h2_fc')
+    h2_4d = tf.reshape(h2_, [batch_size, s_h4, s_w4, dim_con * 2])
+    h1 = concat(h2_4d, y_4d)
+
+    h2_4d = tf.nn.relu(deconv2d(h1, [batch_size, s_h2, s_w2, dim_con * 2], 'h3_con'))
+    h2 = concat(h2_4d, y_4d)
+
+    return tf.nn.sigmoid(deconv2d(h2, [batch_size, s_h, s_w, 1], 'x'))
 
 
 # TODO implement minibatch
-def discriminator(x, y, dim_h1=300, dim_h2=150):
+def discriminator(x, y, batch_size, dim_con=64, dim_fc=1024):
     """
     """
-    x_ = tf.concat([2.0 * (x - 0.5), y], 1)
+    y_4d = tf.reshape(y, [batch_size, 1, 1, DIM_Y])
+    x_4d = tf.reshape(x, [batch_size, 28, 28, 1])
+    x_ = concat(x_4d, y_4d)
 
-    h1 = tf.nn.dropout(relu(x_, DIM_IMAGE + DIM_Y, dim_h1, 'h1', leaky=True), KEEP_PROB)
-    h2 = tf.nn.dropout(relu(h1, dim_h1, dim_h2, 'h2', leaky=True), KEEP_PROB)
-    logits = linear(h2, dim_h2, 1, 'y')
+    h1_ = lrelu(conv2d(x_, 1 + DIM_Y, 'h1_conv2'))
+    h1 = concat(h1_, y_4d)
+
+    # TODO add batch-normalization
+    h2_4d = lrelu(conv2d(h1, dim_con + DIM_Y, 'h2_conv2'))
+    h2_ = tf.reshape(h2_4d, [batch_size, -1])
+    h2 = tf.concat([h2_, y], 1)
+
+    h3_ = tf.nn.dropout(relu(h2, h2.get_shape().as_list()[-1], dim_fc, 'h3_fc1', leaky=True), KEEP_PROB)
+    h3 = tf.concat([h3_, y], 1)
+    # h4 = tf.nn.dropout(relu(h3, dim_fc, dim_fc, 'h4_fc', leaky=True), KEEP_PROB)
+
+    logits = linear(h3, dim_fc + DIM_Y, 1, 'y')
 
     return tf.nn.sigmoid(logits), logits
 
 
-# def conv_cond_concat(x, y):
-#     x_shapes = x.get_shape()
-#     y_shapes = y.get_shape()
-#     return tf.concat([x, y * tf.ones([x_shapes[0], x_shapes[1], x_shapes[2], y_shapes[3]])], 3)
+def concat(x, y):
+    x_shapes = x.get_shape()
+    y_shapes = y.get_shape()
+    return tf.concat([
+        x, y * tf.ones([x_shapes[0], x_shapes[1], x_shapes[2], y_shapes[3]])], 3)
+
+
+def conv2d(input_, output_dim, scope=None, filter_height=5, filter_width=5, stride=2):
+    with tf.variable_scope(scope or 'conv2'):
+        w = weight_variable([filter_height, filter_width, input_.get_shape().as_list()[-1], output_dim])
+        b = bias_variable([output_dim])
+        strides = [1, stride, stride, 1]
+
+        conv2 = tf.nn.conv2d(input_, w, strides, padding='SAME')
+
+        return tf.reshape(tf.nn.bias_add(conv2, b), conv2.get_shape())
+
+
+def deconv2d(input_, output_dim, scope=None, filter_height=5, filter_width=5, stride=2):
+    with tf.variable_scope(scope or 'deconv2'):
+        w = weight_variable([filter_height, filter_width, output_dim[-1], input_.get_shape().as_list()[-1]])
+        b = bias_variable([output_dim[-1]])
+        strides = [1, stride, stride, 1]
+
+        deconv = tf.nn.conv2d_transpose(input_, w, output_shape=output_dim, strides=strides)
+
+        return tf.reshape(tf.nn.bias_add(deconv, b), deconv.get_shape())
+
+
+def lrelu(x, leak=0.2):
+    return tf.maximum(x, leak * x)
+
+
+def max_pool_2x2(x):
+    return tf.nn.max_pool(x, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='SAME')
 
 
 class GAN(object):
@@ -177,18 +234,18 @@ class GAN(object):
             # samples from a noise distribution as input
             self.z = tf.placeholder(tf.float32, [None, DIM_Z])
             # the generator network passes the input (self.z) through the MLP
-            self.G = generator(self.z, self.y)
+            self.G = generator(self.z, self.y, self.batch_size)
 
         with tf.variable_scope('discriminator') as scope:
             self.x = tf.placeholder(tf.float32, [None, DIM_IMAGE])
             # Discriminator D1 takes in input x (sampled from the true data distribution)
             # and outputs the likelihood of this input belonging to the true data distribution
-            self.D_real, self.logits_D_real = discriminator(self.x, self.y)
+            self.D_real, self.logits_D_real = discriminator(self.x, self.y, self.batch_size)
             # because we're reusing the variable discriminator
             scope.reuse_variables()
             # Discriminator D1 takes in the fake data generated by G and outputs the
             # likelihood of this input belonging to the true data distribution
-            self.D_fake, self.logits_D_fake = discriminator(self.G, self.y)
+            self.D_fake, self.logits_D_fake = discriminator(self.G, self.y, self.batch_size)
 
         # When optimizing D, we want to define it's loss function such that it
         # maximizes the quantity D1 (which maps the distribution of true data) and
